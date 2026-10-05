@@ -1,34 +1,18 @@
-import asyncio
-from typing import List, Optional
-from datetime import datetime, timezone
-from app.integrations.base import (
-    SocialSourceAdapter,
-    NormalizedSocialPost,
-    NormalizedSocialComment,
-)
+from app.integrations.base import SocialSourceAdapter
+from app.integrations.official import discover, fetch_comments, IntegrationUnavailable
 
 
 class ThreadsAdapter(SocialSourceAdapter):
-    """
-    Threads Discovery Sensor Adapter.
-    Maps public thread posts into the common normalized schema.
-    """
+    async def search(self, keywords, max_results=100):
+        return await discover("THREADS", keywords, max_results)
 
-    async def search(
-        self, keywords: List[str], max_results: int = 100
-    ) -> List[NormalizedSocialPost]:
-        await asyncio.sleep(0.05)
-        return []
+    async def fetch_post(self, post_url_or_id):
+        raise IntegrationUnavailable(
+            "Use official keyword search or import a post JSON record"
+        )
 
-    async def fetch_post(self, post_url_or_id: str) -> Optional[NormalizedSocialPost]:
-        await asyncio.sleep(0.02)
-        return None
-
-    async def fetch_comments(
-        self, post_external_id: str
-    ) -> List[NormalizedSocialComment]:
-        await asyncio.sleep(0.02)
-        return []
+    async def fetch_comments(self, post_external_id):
+        return await fetch_comments("THREADS", post_external_id)
 
 
 threads_adapter = ThreadsAdapter()

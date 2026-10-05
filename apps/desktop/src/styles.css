@@ -1746,3 +1746,18 @@ td {
     margin-bottom: 16px;
   }
 }
+.notice {
+  position: fixed;
+  z-index: 60;
+  top: 90px;
+  right: 30px;
+  max-width: min(540px, calc(100vw - 100px));
+  box-shadow: 0 8px 25px #17392a14;
+}
+@media (max-width: 600px) {
+  .notice {
+    top: 74px;
+    right: 16px;
+    font-size: 11px;
+  }
+}

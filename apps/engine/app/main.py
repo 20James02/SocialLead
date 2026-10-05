@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.events import event_bus, EventEnvelope
-from app.infrastructure.database.session import init_db
+from app.infrastructure.database.session import init_db, recover_interrupted_operations
 from app.infrastructure.fts.fts_manager import FTSManager
 
 # API Routers
@@ -27,7 +27,9 @@ from app.api.v1.integrations import router as integrations_router
 from app.api.v1.campaigns import router as campaigns_router
 from app.api.v1.scans import workers
 from app.infrastructure.database.session import SessionLocal
-from app.infrastructure.database.models import ScanJobDB, CareTaskDB
+from app.infrastructure.database.models import (
+    CareTaskDB,
+)
 from app.modules.scanner.retention import retention_cleaner
 from app.core.runtime import operation_lock
 
@@ -69,15 +71,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize tables and FTS5 index
     init_db()
     FTSManager.install_sync()
-    with SessionLocal() as db:
-        db.query(ScanJobDB).filter(ScanJobDB.status.in_(["RUNNING", "PAUSED"])).update(
-            {
-                "status": "FAILED",
-                "error_message": "Engine restarted before scan completed",
-                "finished_at": datetime.now(timezone.utc),
-            }
-        )
-        db.commit()
+    recover_interrupted_operations()
     print(f"[*] ScanSocial Engine started on {settings.HOST}:{settings.PORT}")
     maintenance_task = asyncio.create_task(maintenance())
     try:

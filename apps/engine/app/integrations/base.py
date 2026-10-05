@@ -20,6 +20,7 @@ class NormalizedSocialPost(BaseModel):
 class NormalizedSocialComment(BaseModel):
     external_id: str
     author_name: str
+    author_id: Optional[str] = None
     author_url: Optional[str] = None
     content: str
     posted_at: datetime

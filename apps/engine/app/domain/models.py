@@ -32,6 +32,7 @@ class BlacklistEntityType(str, Enum):
     PHONE = "PHONE"
     KEYWORD = "KEYWORD"
     DOMAIN = "DOMAIN"
+    REGEX = "REGEX"
 
 
 class NeedType(str, Enum):

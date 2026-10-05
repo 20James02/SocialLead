@@ -2,6 +2,8 @@
 
 use std::{net::TcpListener, sync::Mutex};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::{ShellExt, process::{CommandChild, CommandEvent}};
 
 #[derive(Clone, serde::Serialize)]
@@ -12,9 +14,36 @@ struct EngineState { connection: EngineConnection, child: Mutex<Option<CommandCh
 #[tauri::command]
 fn engine_connection(state: tauri::State<'_, EngineState>) -> EngineConnection { state.connection.clone() }
 
+#[tauri::command]
+fn open_source_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
+    if !["https", "http"].contains(&parsed.scheme()) || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Only public HTTP source links can be opened".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_customer_export(app: tauri::AppHandle, content: String) -> Result<Option<String>, String> {
+    if content.len() > 10 * 1024 * 1024 { return Err("Export exceeds 10 MB".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let selection = app.dialog().file().add_filter("CSV", &["csv"]).set_file_name("scansocial-customers.csv").blocking_save_file();
+        match selection {
+            Some(file) => {
+                let path = file.into_path().map_err(|e| e.to_string())?;
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+                Ok(Some(path.to_string_lossy().to_string()))
+            },
+            None => Ok(None),
+        }
+    }).await.map_err(|e| e.to_string())?
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let listener = TcpListener::bind("127.0.0.1:0")?;
             let port = listener.local_addr()?.port();
@@ -38,7 +67,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_connection])
+        .invoke_handler(tauri::generate_handler![engine_connection, open_source_url, save_customer_export])
         .build(tauri::generate_context!())
         .expect("Could not initialize ScanSocial desktop");
     app.run(|handle, event| {

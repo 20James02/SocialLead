@@ -1,349 +1,375 @@
--- ScanSocial Production SQLite Schema Definition
--- Supports SQLite 3.35+ with WAL mode and FTS5 enabled
+-- ORM schema snapshot; runtime additive migrations and FTS triggers are in app/infrastructure.
+-- Do not use this snapshot as a replacement for init_db()/FTSManager.install_sync().
 
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
--- 1. Master Persons
-CREATE TABLE IF NOT EXISTS persons (
-    id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    avatar_url TEXT,
-    contact_quality_score INTEGER DEFAULT 0,
-    source_type TEXT NOT NULL,
-    first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    is_merged BOOLEAN DEFAULT 0,
-    merged_into_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_persons_merged ON persons(is_merged, merged_into_id);
-CREATE INDEX IF NOT EXISTS idx_persons_deleted ON persons(deleted_at);
-
--- 2. Phone Numbers with Provenance
-CREATE TABLE IF NOT EXISTS person_phones (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-    raw_phone TEXT NOT NULL,
-    normalized_phone TEXT NOT NULL,
-    source_type TEXT NOT NULL,
-    source_url TEXT,
-    is_verified BOOLEAN DEFAULT 0,
-    captured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_phones_norm ON person_phones(normalized_phone);
-CREATE INDEX IF NOT EXISTS idx_phones_person ON person_phones(person_id);
-
--- 3. Social Accounts
-CREATE TABLE IF NOT EXISTS social_accounts (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-    platform TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    username TEXT,
-    profile_url TEXT,
-    is_verified BOOLEAN DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(platform, external_id)
-);
-CREATE INDEX IF NOT EXISTS idx_social_platform_id ON social_accounts(platform, external_id);
-CREATE INDEX IF NOT EXISTS idx_social_person ON social_accounts(person_id);
-
--- 4. Promoted Customers
-CREATE TABLE IF NOT EXISTS customers (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL UNIQUE REFERENCES persons(id) ON DELETE RESTRICT,
-    status TEXT NOT NULL DEFAULT 'NEW',
-    lead_score INTEGER DEFAULT 0,
-    assigned_to TEXT,
-    next_care_date TIMESTAMP,
-    last_interaction TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_customers_status ON customers(status);
-CREATE INDEX IF NOT EXISTS idx_customers_next_care ON customers(next_care_date);
-
--- 5. Need Profiles
-CREATE TABLE IF NOT EXISTS customer_need_profiles (
-    id TEXT PRIMARY KEY,
-    customer_id TEXT NOT NULL UNIQUE REFERENCES customers(id) ON DELETE CASCADE,
-    need_type TEXT NOT NULL,
-    province TEXT,
-    district TEXT,
-    ward TEXT,
-    property_type TEXT,
-    current_provider TEXT,
-    pain_points TEXT,
-    urgency TEXT DEFAULT 'MEDIUM',
-    budget_signal TEXT,
-    decision_timeline TEXT,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE app_settings (
+	"key" VARCHAR(128) NOT NULL,
+	value_json TEXT NOT NULL,
+	updated_at DATETIME,
+	PRIMARY KEY ("key")
 );
 
--- 6. Opportunities
-CREATE TABLE IF NOT EXISTS opportunities (
-    id TEXT PRIMARY KEY,
-    customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    stage TEXT NOT NULL DEFAULT 'NEW',
-    expected_revenue DECIMAL(12, 2) DEFAULT 0.0,
-    notes TEXT,
-    closed_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_opps_stage ON opportunities(stage);
-CREATE INDEX IF NOT EXISTS idx_opps_customer ON opportunities(customer_id);
-
--- 7. Social Posts
-CREATE TABLE IF NOT EXISTS social_posts (
-    id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    url TEXT NOT NULL,
-    author_id TEXT,
-    author_name TEXT NOT NULL,
-    author_url TEXT,
-    content TEXT NOT NULL,
-    group_name TEXT,
-    group_url TEXT,
-    lead_score INTEGER DEFAULT 0,
-    intent_score INTEGER DEFAULT 0,
-    spam_score INTEGER DEFAULT 0,
-    urgency TEXT DEFAULT 'LOW',
-    phone_extracted TEXT,
-    posted_at TIMESTAMP NOT NULL,
-    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    is_raw BOOLEAN DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP,
-    UNIQUE(platform, external_id)
-);
-CREATE INDEX IF NOT EXISTS idx_posts_scores ON social_posts(lead_score, intent_score, spam_score);
-CREATE INDEX IF NOT EXISTS idx_posts_posted ON social_posts(posted_at DESC);
-CREATE INDEX IF NOT EXISTS idx_posts_is_raw ON social_posts(is_raw);
-
--- 8. Social Comments
-CREATE TABLE IF NOT EXISTS social_comments (
-    id TEXT PRIMARY KEY,
-    post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
-    external_id TEXT NOT NULL,
-    author_name TEXT NOT NULL,
-    author_url TEXT,
-    content TEXT NOT NULL,
-    detected_phone TEXT,
-    intent_score INTEGER DEFAULT 0,
-    posted_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(post_id, external_id)
-);
-CREATE INDEX IF NOT EXISTS idx_comments_post ON social_comments(post_id);
-
--- 9. Saved Posts
-CREATE TABLE IF NOT EXISTS saved_posts (
-    id TEXT PRIMARY KEY,
-    post_id TEXT NOT NULL UNIQUE REFERENCES social_posts(id) ON DELETE CASCADE,
-    person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
-    user_note TEXT,
-    saved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE audit_logs (
+	id VARCHAR(36) NOT NULL,
+	actor VARCHAR(128),
+	action VARCHAR(128) NOT NULL,
+	target_type VARCHAR(64) NOT NULL,
+	target_id VARCHAR(64) NOT NULL,
+	old_value_json TEXT,
+	new_value_json TEXT,
+	created_at DATETIME,
+	PRIMARY KEY (id)
 );
 
--- 10. Scan Jobs
-CREATE TABLE IF NOT EXISTS scan_jobs (
-    id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL,
-    keywords_json TEXT NOT NULL,
-    max_posts INTEGER DEFAULT 500,
-    max_age_hours INTEGER DEFAULT 24,
-    blacklist_mode TEXT DEFAULT 'IGNORE_HARD',
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    scanned_count INTEGER DEFAULT 0,
-    matched_count INTEGER DEFAULT 0,
-    qualified_count INTEGER DEFAULT 0,
-    spam_count INTEGER DEFAULT 0,
-    error_count INTEGER DEFAULT 0,
-    started_at TIMESTAMP,
-    finished_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON scan_jobs(status);
-
--- 11. Scan Results Linker
-CREATE TABLE IF NOT EXISTS scan_results (
-    id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL REFERENCES scan_jobs(id) ON DELETE CASCADE,
-    post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(job_id, post_id)
+CREATE TABLE blacklist_entities (
+	id VARCHAR(36) NOT NULL,
+	entity_type VARCHAR(64) NOT NULL,
+	value VARCHAR(255) NOT NULL,
+	mode VARCHAR(32),
+	reason VARCHAR(255),
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_blacklist_type_val UNIQUE (entity_type, value)
 );
 
--- 12. Labels
-CREATE TABLE IF NOT EXISTS labels (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    color_hex TEXT NOT NULL DEFAULT '#3B82F6',
-    label_type TEXT NOT NULL DEFAULT 'MANUAL',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE campaigns (
+	id VARCHAR(36) NOT NULL,
+	name VARCHAR(255) NOT NULL,
+	channel VARCHAR(64) NOT NULL,
+	status VARCHAR(32),
+	message_template TEXT NOT NULL,
+	frequency_cap_days INTEGER,
+	created_at DATETIME,
+	PRIMARY KEY (id)
 );
 
--- 13. Person Labels
-CREATE TABLE IF NOT EXISTS person_labels (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-    label_id TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(person_id, label_id)
+CREATE TABLE labels (
+	id VARCHAR(36) NOT NULL,
+	name VARCHAR(64) NOT NULL,
+	color_hex VARCHAR(16),
+	label_type VARCHAR(32),
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (name)
 );
 
--- 14. Notes
-CREATE TABLE IF NOT EXISTS notes (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-    author TEXT NOT NULL DEFAULT 'User',
-    content TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE persons (
+	id VARCHAR(36) NOT NULL,
+	display_name VARCHAR(255) NOT NULL,
+	avatar_url VARCHAR(1024),
+	contact_quality_score INTEGER,
+	source_type VARCHAR(64) NOT NULL,
+	first_seen DATETIME,
+	last_seen DATETIME,
+	is_merged BOOLEAN,
+	merged_into_id VARCHAR(36),
+	created_at DATETIME,
+	updated_at DATETIME,
+	deleted_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(merged_into_id) REFERENCES persons (id) ON DELETE SET NULL
 );
 
--- 15. Care Tasks (Calendar & Follow-ups)
-CREATE TABLE IF NOT EXISTS care_tasks (
-    id TEXT PRIMARY KEY,
-    customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    opportunity_id TEXT REFERENCES opportunities(id) ON DELETE SET NULL,
-    title TEXT NOT NULL,
-    description TEXT,
-    scheduled_at TIMESTAMP NOT NULL,
-    priority TEXT NOT NULL DEFAULT 'MEDIUM',
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    completed_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_care_scheduled ON care_tasks(scheduled_at, status);
-
--- 16. Timeline Events
-CREATE TABLE IF NOT EXISTS timeline_events (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    metadata_json TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_timeline_person ON timeline_events(person_id, created_at DESC);
-
--- 17. Blacklist Entities
-CREATE TABLE IF NOT EXISTS blacklist_entities (
-    id TEXT PRIMARY KEY,
-    entity_type TEXT NOT NULL,
-    value TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT 'HARD_BLACKLIST',
-    reason TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(entity_type, value)
-);
-CREATE INDEX IF NOT EXISTS idx_blacklist_val ON blacklist_entities(entity_type, value);
-
--- 18. Conversations
-CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL,
-    external_conversation_id TEXT NOT NULL,
-    linked_person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
-    title TEXT,
-    last_message_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(platform, external_conversation_id)
+CREATE TABLE scan_jobs (
+	id VARCHAR(36) NOT NULL,
+	platform VARCHAR(32) NOT NULL,
+	keywords_json TEXT NOT NULL,
+	max_posts INTEGER,
+	max_age_hours INTEGER,
+	blacklist_mode VARCHAR(32),
+	status VARCHAR(32),
+	scanned_count INTEGER,
+	matched_count INTEGER,
+	qualified_count INTEGER,
+	spam_count INTEGER,
+	error_count INTEGER,
+	error_message TEXT,
+	started_at DATETIME,
+	finished_at DATETIME,
+	created_at DATETIME,
+	PRIMARY KEY (id)
 );
 
--- 19. Messages
-CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    sender_type TEXT NOT NULL,
-    content TEXT NOT NULL,
-    sent_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE INDEX ix_scan_jobs_status ON scan_jobs (status);
+
+CREATE TABLE social_posts (
+	id VARCHAR(36) NOT NULL,
+	platform VARCHAR(32) NOT NULL,
+	external_id VARCHAR(128) NOT NULL,
+	canonical_hash VARCHAR(64),
+	url VARCHAR(1024) NOT NULL,
+	author_id VARCHAR(128),
+	author_name VARCHAR(255) NOT NULL,
+	author_url VARCHAR(1024),
+	content TEXT NOT NULL,
+	group_name VARCHAR(255),
+	group_url VARCHAR(1024),
+	lead_score INTEGER,
+	intent_score INTEGER,
+	spam_score INTEGER,
+	urgency VARCHAR(32),
+	phone_extracted VARCHAR(64),
+	posted_at DATETIME NOT NULL,
+	detected_at DATETIME,
+	is_raw BOOLEAN,
+	created_at DATETIME,
+	deleted_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_post_platform_external_id UNIQUE (platform, external_id)
 );
 
--- 20. Campaigns
-CREATE TABLE IF NOT EXISTS campaigns (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    channel TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'DRAFT',
-    message_template TEXT NOT NULL,
-    frequency_cap_days INTEGER DEFAULT 7,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE INDEX ix_social_posts_canonical_hash ON social_posts (canonical_hash);
+
+CREATE INDEX ix_social_posts_is_raw ON social_posts (is_raw);
+
+CREATE INDEX ix_social_posts_lead_score ON social_posts (lead_score);
+
+CREATE INDEX ix_social_posts_posted_at ON social_posts (posted_at);
+
+CREATE TABLE ai_analysis (
+	id VARCHAR(36) NOT NULL,
+	post_id VARCHAR(36) NOT NULL,
+	intent_score INTEGER NOT NULL,
+	urgency_score INTEGER NOT NULL,
+	opportunity_score INTEGER NOT NULL,
+	spam_score INTEGER NOT NULL,
+	overall_score INTEGER NOT NULL,
+	explanation_json TEXT NOT NULL,
+	next_best_action VARCHAR(64) NOT NULL,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (post_id),
+	FOREIGN KEY(post_id) REFERENCES social_posts (id) ON DELETE CASCADE
 );
 
--- 21. Campaign Recipients
-CREATE TABLE IF NOT EXISTS campaign_recipients (
-    id TEXT PRIMARY KEY,
-    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    status TEXT NOT NULL DEFAULT 'QUEUED',
-    sent_at TIMESTAMP,
-    response_received TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE conversations (
+	id VARCHAR(36) NOT NULL,
+	platform VARCHAR(32) NOT NULL,
+	external_conversation_id VARCHAR(128) NOT NULL,
+	linked_person_id VARCHAR(36),
+	title VARCHAR(255),
+	last_message_at DATETIME,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_conv_platform_ext_id UNIQUE (platform, external_conversation_id),
+	FOREIGN KEY(linked_person_id) REFERENCES persons (id) ON DELETE SET NULL
 );
 
--- 22. Permissions & Consent
-CREATE TABLE IF NOT EXISTS permissions (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL UNIQUE REFERENCES persons(id) ON DELETE CASCADE,
-    marketing_allowed BOOLEAN DEFAULT 0,
-    zalo_allowed BOOLEAN DEFAULT 0,
-    opt_out BOOLEAN DEFAULT 0,
-    do_not_contact BOOLEAN DEFAULT 0,
-    source TEXT NOT NULL DEFAULT 'CUSTOMER_OPT_IN',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE customers (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	status VARCHAR(64),
+	lead_score INTEGER,
+	assigned_to VARCHAR(128),
+	next_care_date DATETIME,
+	last_interaction DATETIME,
+	created_at DATETIME,
+	updated_at DATETIME,
+	deleted_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (person_id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE RESTRICT
 );
 
--- 23. AI Analysis & Scoring Explainability
-CREATE TABLE IF NOT EXISTS ai_analysis (
-    id TEXT PRIMARY KEY,
-    post_id TEXT NOT NULL UNIQUE REFERENCES social_posts(id) ON DELETE CASCADE,
-    intent_score INTEGER NOT NULL,
-    urgency_score INTEGER NOT NULL,
-    opportunity_score INTEGER NOT NULL,
-    spam_score INTEGER NOT NULL,
-    overall_score INTEGER NOT NULL,
-    explanation_json TEXT NOT NULL,
-    next_best_action TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE INDEX ix_customers_next_care_date ON customers (next_care_date);
+
+CREATE INDEX ix_customers_status ON customers (status);
+
+CREATE TABLE notes (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	author VARCHAR(128),
+	content TEXT NOT NULL,
+	created_at DATETIME,
+	updated_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE CASCADE
 );
 
--- 24. Audit Logs
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id TEXT PRIMARY KEY,
-    actor TEXT NOT NULL DEFAULT 'system',
-    action TEXT NOT NULL,
-    target_type TEXT NOT NULL,
-    target_id TEXT NOT NULL,
-    old_value_json TEXT,
-    new_value_json TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE permissions (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	marketing_allowed BOOLEAN,
+	zalo_allowed BOOLEAN,
+	opt_out BOOLEAN,
+	do_not_contact BOOLEAN,
+	source VARCHAR(64),
+	updated_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (person_id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE CASCADE
 );
 
--- 25. App Settings
-CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value_json TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE person_labels (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	label_id VARCHAR(36) NOT NULL,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_person_label UNIQUE (person_id, label_id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE CASCADE,
+	FOREIGN KEY(label_id) REFERENCES labels (id) ON DELETE CASCADE
 );
 
--- 26. Virtual Full-Text Search (FTS5) Table
-CREATE VIRTUAL TABLE IF NOT EXISTS fts_search USING fts5(
-    entity_id UNINDEXED,
-    entity_type UNINDEXED,
-    title,
-    content,
-    tokenize = 'unicode61 remove_diacritics 0'
+CREATE TABLE person_phones (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	raw_phone VARCHAR(32) NOT NULL,
+	normalized_phone VARCHAR(32) NOT NULL,
+	source_type VARCHAR(64) NOT NULL,
+	source_url VARCHAR(1024),
+	is_verified BOOLEAN,
+	captured_at DATETIME,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE CASCADE
 );
+
+CREATE INDEX ix_person_phones_normalized_phone ON person_phones (normalized_phone);
+
+CREATE TABLE saved_posts (
+	id VARCHAR(36) NOT NULL,
+	post_id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36),
+	user_note TEXT,
+	saved_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (post_id),
+	FOREIGN KEY(post_id) REFERENCES social_posts (id) ON DELETE CASCADE,
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE SET NULL
+);
+
+CREATE TABLE scan_results (
+	id VARCHAR(36) NOT NULL,
+	job_id VARCHAR(36) NOT NULL,
+	post_id VARCHAR(36) NOT NULL,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_scan_result_job_post UNIQUE (job_id, post_id),
+	FOREIGN KEY(job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE,
+	FOREIGN KEY(post_id) REFERENCES social_posts (id) ON DELETE CASCADE
+);
+
+CREATE TABLE social_accounts (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	platform VARCHAR(32) NOT NULL,
+	external_id VARCHAR(128) NOT NULL,
+	username VARCHAR(255),
+	profile_url VARCHAR(1024),
+	is_verified BOOLEAN,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_platform_external_id UNIQUE (platform, external_id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE CASCADE
+);
+
+CREATE TABLE social_comments (
+	id VARCHAR(36) NOT NULL,
+	post_id VARCHAR(36) NOT NULL,
+	external_id VARCHAR(128) NOT NULL,
+	author_name VARCHAR(255) NOT NULL,
+	author_id VARCHAR(128),
+	author_url VARCHAR(1024),
+	content TEXT NOT NULL,
+	detected_phone VARCHAR(64),
+	intent_score INTEGER,
+	posted_at DATETIME NOT NULL,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_comment_post_external_id UNIQUE (post_id, external_id),
+	FOREIGN KEY(post_id) REFERENCES social_posts (id) ON DELETE CASCADE
+);
+
+CREATE TABLE timeline_events (
+	id VARCHAR(36) NOT NULL,
+	person_id VARCHAR(36) NOT NULL,
+	event_type VARCHAR(64) NOT NULL,
+	title VARCHAR(255) NOT NULL,
+	metadata_json TEXT,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(person_id) REFERENCES persons (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_timeline_events_created_at ON timeline_events (created_at);
+
+CREATE TABLE campaign_recipients (
+	id VARCHAR(36) NOT NULL,
+	campaign_id VARCHAR(36) NOT NULL,
+	customer_id VARCHAR(36) NOT NULL,
+	status VARCHAR(32),
+	sent_at DATETIME,
+	response_received TEXT,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(campaign_id) REFERENCES campaigns (id) ON DELETE CASCADE,
+	FOREIGN KEY(customer_id) REFERENCES customers (id) ON DELETE CASCADE
+);
+
+CREATE TABLE customer_need_profiles (
+	id VARCHAR(36) NOT NULL,
+	customer_id VARCHAR(36) NOT NULL,
+	need_type VARCHAR(64) NOT NULL,
+	province VARCHAR(128),
+	district VARCHAR(128),
+	ward VARCHAR(128),
+	property_type VARCHAR(64),
+	current_provider VARCHAR(128),
+	pain_points TEXT,
+	urgency VARCHAR(32),
+	budget_signal VARCHAR(128),
+	decision_timeline VARCHAR(128),
+	updated_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (customer_id),
+	FOREIGN KEY(customer_id) REFERENCES customers (id) ON DELETE CASCADE
+);
+
+CREATE TABLE messages (
+	id VARCHAR(36) NOT NULL,
+	conversation_id VARCHAR(36) NOT NULL,
+	sender_type VARCHAR(32) NOT NULL,
+	content TEXT NOT NULL,
+	sent_at DATETIME,
+	created_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
+);
+
+CREATE TABLE opportunities (
+	id VARCHAR(36) NOT NULL,
+	customer_id VARCHAR(36) NOT NULL,
+	title VARCHAR(255) NOT NULL,
+	stage VARCHAR(64),
+	expected_revenue NUMERIC(12, 2),
+	notes TEXT,
+	closed_at DATETIME,
+	created_at DATETIME,
+	updated_at DATETIME,
+	deleted_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(customer_id) REFERENCES customers (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_opportunities_stage ON opportunities (stage);
+
+CREATE TABLE care_tasks (
+	id VARCHAR(36) NOT NULL,
+	customer_id VARCHAR(36) NOT NULL,
+	opportunity_id VARCHAR(36),
+	title VARCHAR(255) NOT NULL,
+	description TEXT,
+	scheduled_at DATETIME NOT NULL,
+	priority VARCHAR(32),
+	status VARCHAR(32),
+	completed_at DATETIME,
+	created_at DATETIME,
+	deleted_at DATETIME,
+	PRIMARY KEY (id),
+	FOREIGN KEY(customer_id) REFERENCES customers (id) ON DELETE CASCADE,
+	FOREIGN KEY(opportunity_id) REFERENCES opportunities (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_care_tasks_scheduled_at ON care_tasks (scheduled_at);
+
+CREATE INDEX ix_care_tasks_status ON care_tasks (status);

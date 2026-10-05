@@ -1,6 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Connection = { baseUrl: string; token: string };
+export function sourceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+export async function openSource(value: string) {
+  const url = sourceUrl(value);
+  if (!url)
+    throw new Error("Nguồn dữ liệu phải là một liên kết HTTP/HTTPS hợp lệ");
+  if ("__TAURI_INTERNALS__" in window) await invoke("open_source_url", { url });
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
 let connection: Connection = { baseUrl: "http://127.0.0.1:8765", token: "" };
 export function configure(next: Connection) {
   const url = new URL(next.baseUrl);
@@ -57,12 +76,19 @@ export async function exportCustomers() {
     { headers: { "X-App-Session-Token": connection.token } },
   );
   if (!response.ok) throw new Error("Không xuất được danh sách khách hàng");
+  if ("__TAURI_INTERNALS__" in window) {
+    const path = await invoke<string | null>("save_customer_export", {
+      content: await response.text(),
+    });
+    return Boolean(path);
+  }
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
   link.download = "scansocial-customers.csv";
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
 }
 export function liveFeed(
   onEvent: (type: string) => void,

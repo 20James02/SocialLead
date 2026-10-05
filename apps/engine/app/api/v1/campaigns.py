@@ -150,6 +150,34 @@ class SendInput(BaseModel):
     reviewed: bool
 
 
+class ReconcileInput(BaseModel):
+    delivered: bool
+    note: str = Field(min_length=1, max_length=1000)
+
+
+@router.patch("/{campaign_id}/recipients/{recipient_id}/reconcile")
+def reconcile_delivery(
+    campaign_id: str, recipient_id: str, req: ReconcileInput, db: Session = DbSession
+):
+    recipient = require(db, CampaignRecipientDB, recipient_id)
+    if recipient.campaign_id != campaign_id:
+        raise HTTPException(404, "Recipient not found in campaign")
+    if recipient.status not in ("UNKNOWN", "SENDING"):
+        raise HTTPException(409, "Only unconfirmed deliveries can be reconciled")
+    recipient.status = "SENT" if req.delivered else "REJECTED"
+    recipient.sent_at = datetime.now(timezone.utc) if req.delivered else None
+    customer = require(db, CustomerDB, recipient.customer_id)
+    record_event(
+        db,
+        customer.person_id,
+        "OA_DELIVERY_RECONCILED",
+        "Xác nhận thủ công kết quả gửi OA",
+        req.model_dump(),
+    )
+    db.commit()
+    return {"status": recipient.status}
+
+
 @router.post("/{campaign_id}/recipients/{recipient_id}/send")
 async def send_reviewed(
     campaign_id: str, recipient_id: str, req: SendInput, db: Session = DbSession

@@ -49,6 +49,8 @@ jobs:
           cd apps/engine
           pip install -r requirements.txt pyinstaller
           python ../../scripts/build-sidecar.py
+      - name: Test packaged engine
+        run: python scripts/smoke-sidecar.py
 
       - name: Build Desktop Application (Tauri)
         run: |

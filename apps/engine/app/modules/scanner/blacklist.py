@@ -1,4 +1,5 @@
 import re
+import regex
 from urllib.parse import urlparse
 from typing import Dict, Optional, Set, Tuple
 from app.domain.models import BlacklistMode, BlacklistEntityType
@@ -16,6 +17,7 @@ class BlacklistEvaluator:
         # Maps (entity_type, value_lower) -> (mode, reason)
         self._rules: Dict[Tuple[str, str], Tuple[BlacklistMode, str]] = {}
         self._keyword_rules: Dict[str, Tuple[BlacklistMode, str]] = {}
+        self._regex_rules = {}
 
     def add_rule(
         self,
@@ -24,13 +26,27 @@ class BlacklistEvaluator:
         mode: BlacklistMode,
         reason: str = "",
     ):
-        clean_val = value.strip().lower()
+        clean_val = (
+            value.strip()
+            if entity_type == BlacklistEntityType.REGEX
+            else value.strip().lower()
+        )
+        if entity_type == BlacklistEntityType.REGEX:
+            self._regex_rules[clean_val] = (
+                regex.compile(clean_val, regex.IGNORECASE),
+                mode,
+                reason,
+            )
+            return
         if entity_type == BlacklistEntityType.KEYWORD:
             self._keyword_rules[clean_val] = (mode, reason)
         else:
             self._rules[(entity_type.value, clean_val)] = (mode, reason)
 
     def remove_rule(self, entity_type: BlacklistEntityType, value: str):
+        if entity_type == BlacklistEntityType.REGEX:
+            self._regex_rules.pop(value.strip(), None)
+            return
         clean_val = value.strip().lower()
         if entity_type == BlacklistEntityType.KEYWORD:
             self._keyword_rules.pop(clean_val, None)
@@ -40,6 +56,7 @@ class BlacklistEvaluator:
     def clear(self):
         self._rules.clear()
         self._keyword_rules.clear()
+        self._regex_rules.clear()
 
     def evaluate(
         self,
@@ -57,6 +74,19 @@ class BlacklistEvaluator:
         Returns: (is_blacklisted, mode, reason)
         """
         soft_hit = None
+        for pattern, mode, reason in self._regex_rules.values():
+            try:
+                matched = pattern.search(content or "", timeout=0.025)
+            except TimeoutError:
+                return (
+                    True,
+                    BlacklistMode.HARD_BLACKLIST,
+                    "Content regex exceeded its evaluation budget",
+                )
+            if matched:
+                if mode == BlacklistMode.HARD_BLACKLIST:
+                    return True, mode, reason
+                soft_hit = soft_hit or (mode, reason)
 
         # Pages, profile/group URLs and content domains share hard-rule precedence.
         domains = {

@@ -1,30 +1,20 @@
-# Windows Build & Release Guide — ScanSocial
+# Windows packages
 
-## Prerequisites
-- Windows 10/11 (64-bit)
-- Node.js 18+ & npm 9+
-- Python 3.12+ (64-bit)
-- Rust 1.75+ (`rustup default stable-x86_64-pc-windows-msvc`)
-- Visual Studio C++ Build Tools & WiX Toolset v3 (for MSI installers)
+Use Windows x64, Python >= 3.12, Node >= 22.12, Rust stable and Visual Studio C++ Build Tools with the Windows SDK. The app uses WebView2. See https://v2.tauri.app/start/prerequisites/.
 
-## Build Instructions
-1. **Compile Backend Sidecar Binary:**
-   ```powershell
-   cd apps/engine
-   python -m pip install -r requirements.txt pyinstaller
-   pyinstaller --clean --noconfirm --onedir --name scansocial-engine app/main.py
-   # Copy binary output to Tauri sidecar directory
-   New-Item -ItemType Directory -Force ../desktop/src-tauri/bin
-   Copy-Item -Recurse dist/scansocial-engine ../desktop/src-tauri/bin/scansocial-engine-x86_64-pc-windows-msvc
-   ```
+From the repository root:
 
-2. **Package Desktop Shell via Tauri:**
-   ```powershell
-   cd ../desktop
-   npm install
-   npm run tauri build
-   ```
+```powershell
+python -m pip install -r apps/engine/requirements.txt pyinstaller
+npm ci --prefix apps/desktop
+python -m pytest apps/engine/tests -q
+python scripts/build-sidecar.py
+python scripts/smoke-sidecar.py
+npm run tauri build --prefix apps/desktop
+```
 
-3. **Output Artifacts:**
-   - Standalone Portable Executable: `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe`
-   - Windows Installer: `apps/desktop/src-tauri/target/release/bundle/msi/*.msi`
+The packaging script creates the correctly named one-file sidecar from entrypoint.py. Tauri outputs NSIS setup EXE and MSI under apps/desktop/src-tauri/target/release/bundle/. The NSIS EXE is an installer, not a portable application.
+
+Desktop Packages on GitHub Actions builds installers on each main push; download the scansocial-Windows artifact. Tagged v* releases use the release workflow. Packages are not code-signed; signing credentials are not included in this repository.
+
+First launch starts the engine automatically and uses per-user app data. Configure permitted platform tokens in Settings. Test clean installation and native dialogs before distributing to customers.

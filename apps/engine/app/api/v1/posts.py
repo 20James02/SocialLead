@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import json
+import asyncio
+import httpx
 from app.infrastructure.database.models import (
     PersonDB,
     PersonPhoneDB,
@@ -12,6 +14,8 @@ from app.infrastructure.database.models import (
     AIAnalysisDB,
 )
 from app.modules.identity.phone_normalizer import PhoneNormalizer
+from app.integrations.official import fetch_comments, IntegrationUnavailable
+from app.modules.scoring.lead_scorer import lead_scorer
 
 from app.api.deps import DbSession, SessionAuth
 from app.infrastructure.database.models import (
@@ -263,6 +267,44 @@ def promote_post(post_id: str, db: Session = DbSession):
     return {"person_id": person.id}
 
 
+@router.post("/{post_id}/sync-comments")
+async def sync_post_comments(post_id: str, db: Session = DbSession):
+    post = db.get(SocialPostDB, post_id)
+    if not post or post.deleted_at:
+        raise HTTPException(404, "Post not found")
+    try:
+        comments = await asyncio.wait_for(
+            fetch_comments(post.platform, post.external_id), timeout=25
+        )
+    except IntegrationUnavailable as exc:
+        raise HTTPException(409, str(exc))
+    except (httpx.HTTPError, TimeoutError):
+        raise HTTPException(502, "Source API unavailable or timed out; try again later")
+    existing = {c.external_id for c in post.comments}
+    count = 0
+    for c in comments:
+        if c.external_id in existing:
+            continue
+        existing.add(c.external_id)
+        phones = PhoneNormalizer.extract_and_normalize_all(
+            c.content, source_type="SOCIAL_COMMENT", source_url=post.url
+        )
+        score = lead_scorer.score_post(
+            c.content, phones[0].normalized_phone if phones else None, c.author_name
+        )
+        db.add(
+            SocialCommentDB(
+                post_id=post.id,
+                **c.model_dump(),
+                detected_phone=phones[0].normalized_phone if phones else None,
+                intent_score=score.intent_score,
+            )
+        )
+        count += 1
+    db.commit()
+    return {"status": "SYNCED", "imported": count}
+
+
 @router.post("/{post_id}/comments/{comment_id}/promote")
 def promote_comment(post_id: str, comment_id: str, db: Session = DbSession):
     comment = (
@@ -270,7 +312,7 @@ def promote_comment(post_id: str, comment_id: str, db: Session = DbSession):
     )
     if not comment:
         raise HTTPException(404, "Comment not found")
-    author_key = comment.author_url or f"comment:{comment.id}"
+    author_key = comment.author_id or comment.author_url or f"comment:{comment.id}"
     person = promote_author(
         db,
         comment.author_name,

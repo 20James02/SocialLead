@@ -2,6 +2,7 @@ import {
   useEffect,
   useState,
   useId,
+  useRef,
   cloneElement,
   isValidElement,
   type ReactElement,
@@ -41,6 +42,8 @@ import {
   exportCustomers,
   liveFeed,
   request,
+  openSource,
+  sourceUrl,
   type Connection,
 } from "./api";
 import {
@@ -224,16 +227,47 @@ function Modal({
   close: () => void;
   children: ReactNode;
 }) {
+  const modalRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const focusable = () =>
+      Array.from(
+        modalRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex="0"]',
+        ) || [],
+      ).filter((el) => el.getClientRects().length > 0);
+    const first =
+      focusable().find((el) =>
+        ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName),
+      ) || focusable()[0];
+    first?.focus();
     const fn = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape") closeRef.current();
+      if (e.key === "Tab") {
+        const items = focusable();
+        const first = items[0],
+          last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
     };
     window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
-  }, [close]);
+    return () => {
+      window.removeEventListener("keydown", fn);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
   return (
     <div className="modal-backdrop" onClick={close}>
       <section
+        ref={modalRef}
         className="modal"
         role="dialog"
         aria-modal="true"
@@ -283,15 +317,16 @@ export default function App() {
     setBusy(true);
     setNotice(null);
     try {
-      await work();
-      setVersion((v) => v + 1);
-      if (message) setNotice({ text: message, error: false });
+      const result = await work();
+      if (message && result !== false)
+        setNotice({ text: message, error: false });
     } catch (e) {
       setNotice({
         text: e instanceof Error ? e.message : "Có lỗi xảy ra",
         error: true,
       });
     } finally {
+      setVersion((v) => v + 1);
       setBusy(false);
     }
   };
@@ -1153,15 +1188,16 @@ function Leads({
                   <h3>{detail.data.author_name}</h3>
                   <small>{date(detail.data.posted_at)}</small>
                 </div>
-                <a
+                <button
                   className="text-button"
-                  target="_blank"
-                  rel="noreferrer"
-                  href={detail.data.url}
+                  disabled={!sourceUrl(detail.data.url) || busy}
+                  onClick={() =>
+                    void act(() => openSource(detail.data!.url), "")
+                  }
                 >
                   Nguồn
                   <ExternalLink size={14} />
-                </a>
+                </button>
               </div>
               <p className="post-content">{detail.data.content}</p>
               <DataState {...analysis} />
@@ -1218,6 +1254,18 @@ function Leads({
               <h3 className="spaced">
                 Bình luận ({comments.data?.length || 0})
               </h3>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void act(
+                    () => request(`/posts/${selected}/sync-comments`, "POST"),
+                    "Đã đồng bộ bình luận từ API chính thức",
+                  )
+                }
+              >
+                Đồng bộ bình luận từ nguồn
+              </button>
               {comments.data?.map((c) => (
                 <div className="comment" key={c.id}>
                   <strong>{c.author_name}</strong>
@@ -1413,13 +1461,57 @@ function Contacts({
                           : "Chưa xác minh chủ sở hữu"}
                       </small>
                       {p.source_url && (
-                        <a href={p.source_url} target="_blank" rel="noreferrer">
+                        <button
+                          className="text-button"
+                          disabled={!sourceUrl(p.source_url) || busy}
+                          onClick={() =>
+                            void act(() => openSource(p.source_url!), "")
+                          }
+                        >
                           Nguồn dữ liệu ↗
-                        </a>
+                        </button>
                       )}
                     </div>
                   ))}
                 </div>
+                {!profile.data.customer_id && (
+                  <details>
+                    <summary>Chỉnh sửa liên hệ</summary>
+                    <form
+                      key={profile.data.id + profile.data.display_name}
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const f = e.currentTarget;
+                        void act(
+                          () =>
+                            request(`/persons/${selected}`, "PATCH", {
+                              display_name: value(f, "name"),
+                              phone: value(f, "phone") || null,
+                            }),
+                          "Đã cập nhật liên hệ",
+                        );
+                      }}
+                    >
+                      <Field title="Tên liên hệ">
+                        <input
+                          name="name"
+                          required
+                          defaultValue={profile.data.display_name}
+                          maxLength={255}
+                        />
+                      </Field>
+                      <Field title="Thêm số điện thoại">
+                        <input name="phone" placeholder="09xx xxx xxx" />
+                      </Field>
+                      <button
+                        className="button secondary compact"
+                        disabled={busy}
+                      >
+                        Lưu liên hệ
+                      </button>
+                    </form>
+                  </details>
+                )}
                 {!profile.data.customer_id && (
                   <form
                     className="inset"
@@ -1634,7 +1726,7 @@ function Contacts({
                 </form>
                 <h3 className="spaced">Nhãn hồ sơ</h3>
                 <form
-                  key={`labels-${selected}-${version}`}
+                  key={`labels-${selected}-${profile.data.labels.join(",")}`}
                   onSubmit={(e) => {
                     e.preventDefault();
                     const f = e.currentTarget;
@@ -1660,7 +1752,7 @@ function Contacts({
                 <details className="spaced">
                   <summary>Quyền liên hệ</summary>
                   <form
-                    key={`consent-${selected}-${version}`}
+                    key={`consent-${selected}-${JSON.stringify(profile.data.permission)}`}
                     onSubmit={(e) => {
                       e.preventDefault();
                       const f = e.currentTarget;
@@ -2171,6 +2263,7 @@ function Blacklist({ version, act, busy }: Common) {
                 "GROUP",
                 "PHONE",
                 "DOMAIN",
+                "REGEX",
               ]}
             />
           </Field>
@@ -2647,6 +2740,7 @@ function Campaigns({ version, act, busy }: Common) {
     selected ? `/campaigns/${selected}/preview` : null,
     version,
   );
+  const [reconcile, setReconcile] = useState<Recipient | null>(null);
   return (
     <>
       <div className="toolbar">
@@ -2713,6 +2807,15 @@ function Campaigns({ version, act, busy }: Common) {
                 >
                   Duyệt & gửi qua OA
                 </button>
+                {["UNKNOWN", "SENDING"].includes(r.status) && (
+                  <button
+                    className="text-button"
+                    disabled={busy}
+                    onClick={() => setReconcile(r)}
+                  >
+                    Đối soát kết quả trong OA
+                  </button>
+                )}
               </div>
             ))
           ) : (
@@ -2802,6 +2905,51 @@ function Campaigns({ version, act, busy }: Common) {
             <button className="button" disabled={busy}>
               <Send size={15} />
               Gửi qua Zalo OA
+            </button>
+          </form>
+        </Modal>
+      )}
+      {reconcile && (
+        <Modal
+          title="Đối soát tin chưa xác nhận"
+          close={() => setReconcile(null)}
+        >
+          <p>
+            Kiểm tra lịch sử gửi trong OA trước khi xác nhận kết quả cho{" "}
+            {reconcile.name}.
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const f = e.currentTarget;
+              void act(async () => {
+                await request(
+                  `/campaigns/${selected}/recipients/${reconcile.id}/reconcile`,
+                  "PATCH",
+                  {
+                    delivered: value(f, "result") === "sent",
+                    note: value(f, "note"),
+                  },
+                );
+                setReconcile(null);
+              }, "Đã ghi nhận kết quả đối soát");
+            }}
+          >
+            <Field title="Kết quả trong OA">
+              <select name="result">
+                <option value="sent">OA xác nhận đã gửi</option>
+                <option value="rejected">Xác nhận chưa gửi</option>
+              </select>
+            </Field>
+            <Field title="Ghi chú đối soát">
+              <textarea name="note" required rows={3} />
+            </Field>
+            <label className="checkbox">
+              <input type="checkbox" required />
+              Tôi đã kiểm tra lịch sử OA thực tế.
+            </label>
+            <button className="button" disabled={busy}>
+              Lưu kết quả đối soát
             </button>
           </form>
         </Modal>

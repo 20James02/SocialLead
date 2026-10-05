@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.domain.models import BlacklistEntityType, BlacklistMode
 from app.infrastructure.database.models import (
     SocialPostDB,
@@ -28,17 +29,6 @@ def ingest(db: Session, job, posts, *, comments=None):
     keywords = json.loads(job.keywords_json)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=job.max_age_hours)
     dedup = PostDeduplicator()
-    for existing in (
-        db.query(SocialPostDB).filter(SocialPostDB.platform == job.platform).all()
-    ):
-        stamp = to_utc(existing.posted_at).isoformat()
-        canonical = dedup.compute_canonical_hash(
-            existing.platform,
-            existing.author_id or existing.author_url,
-            existing.content,
-            stamp,
-        )
-        dedup.record_seen(existing.platform, existing.external_id, canonical)
     accepted = []
     for raw in posts[: job.max_posts]:
         job.scanned_count += 1
@@ -55,9 +45,20 @@ def ingest(db: Session, job, posts, *, comments=None):
         ):
             continue
         stamp = posted_at.isoformat()
-        author_key = raw.author_id or raw.author_url
-        if dedup.is_duplicate(
-            raw.platform, raw.external_id, author_key, raw.content, stamp
+        author_key = raw.author_id or raw.author_url or raw.author_name
+        canonical = dedup.compute_canonical_hash(
+            raw.platform, author_key, raw.content, stamp
+        )
+        if (
+            db.query(SocialPostDB.id)
+            .filter(
+                SocialPostDB.platform == raw.platform,
+                or_(
+                    SocialPostDB.external_id == raw.external_id,
+                    SocialPostDB.canonical_hash == canonical,
+                ),
+            )
+            .first()
         ):
             continue
         phones = PhoneNormalizer.extract_and_normalize_all(
@@ -84,6 +85,7 @@ def ingest(db: Session, job, posts, *, comments=None):
         need = lead_scorer.extract_need_profile(raw.content)
         post = SocialPostDB(
             **raw.model_dump(),
+            canonical_hash=canonical,
             lead_score=score.overall_lead_score,
             intent_score=score.intent_score,
             spam_score=score.spam_score,

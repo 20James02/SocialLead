@@ -482,3 +482,142 @@ def test_vietnam_quiet_hours_use_customer_timezone():
     assert ConsentGovernance.is_in_quiet_hours(
         datetime(2026, 10, 5, 0, 59, tzinfo=timezone.utc)
     )
+
+
+def oa_fixture(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.v1.campaigns.vault.get_secret", lambda key: "test-only-token"
+    )
+    monkeypatch.setattr(ConsentGovernance, "is_in_quiet_hours", lambda *args: False)
+    person_id, customer_id = create_customer(client)
+    client.put(
+        f"/api/v1/persons/{person_id}/permission",
+        json={
+            "source": "Explicit test consent",
+            "marketing_allowed": True,
+            "zalo_allowed": True,
+        },
+    )
+    conv = client.post(
+        "/api/v1/conversations",
+        json={
+            "person_id": person_id,
+            "title": "OA",
+            "external_conversation_id": "123456789",
+        },
+    ).json()["id"]
+    client.post(
+        f"/api/v1/conversations/{conv}/messages", json={"content": "Tư vấn giúp tôi"}
+    )
+    campaign = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "OA Care",
+            "message_template": "Chào {name}",
+            "customer_ids": [customer_id],
+        },
+    ).json()["id"]
+    recipient = client.get(f"/api/v1/campaigns/{campaign}/preview").json()[0]
+    assert recipient["eligible"]
+    return campaign, recipient["id"], customer_id
+
+
+def test_reviewed_oa_delivery_records_success_and_enforces_global_frequency_cap(
+    client, monkeypatch
+):
+    campaign, recipient, customer = oa_fixture(client, monkeypatch)
+    sends = []
+
+    async def deliver(uid, content):
+        sends.append((uid, content))
+        return True
+
+    monkeypatch.setattr(zalo_oa, "send_message", deliver)
+    response = client.post(
+        f"/api/v1/campaigns/{campaign}/recipients/{recipient}/send",
+        json={"reviewed": True},
+    )
+    assert response.status_code == 200 and response.json()["status"] == "SENT"
+    assert len(sends) == 1
+    assert (
+        client.post(
+            f"/api/v1/campaigns/{campaign}/recipients/{recipient}/send",
+            json={"reviewed": True},
+        ).status_code
+        == 409
+    )
+    second = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "New care",
+            "message_template": "Hello",
+            "customer_ids": [customer],
+        },
+    ).json()["id"]
+    preview = client.get(f"/api/v1/campaigns/{second}/preview").json()[0]
+    assert not preview["eligible"] and "Frequency cap" in preview["reason"]
+
+
+def test_ambiguous_oa_delivery_blocks_new_batches_until_manual_reconciliation(
+    client, monkeypatch
+):
+    campaign, recipient, customer = oa_fixture(client, monkeypatch)
+
+    async def ambiguous(uid, content):
+        raise TimeoutError("Delivery response lost")
+
+    monkeypatch.setattr(zalo_oa, "send_message", ambiguous)
+    assert (
+        client.post(
+            f"/api/v1/campaigns/{campaign}/recipients/{recipient}/send",
+            json={"reviewed": True},
+        ).status_code
+        == 502
+    )
+    assert (
+        client.get(f"/api/v1/campaigns/{campaign}/preview").json()[0]["status"]
+        == "UNKNOWN"
+    )
+    second = client.post(
+        "/api/v1/campaigns",
+        json={"name": "Next", "message_template": "Hello", "customer_ids": [customer]},
+    ).json()["id"]
+    assert not client.get(f"/api/v1/campaigns/{second}/preview").json()[0]["eligible"]
+    result = client.patch(
+        f"/api/v1/campaigns/{campaign}/recipients/{recipient}/reconcile",
+        json={"delivered": False, "note": "Confirmed not sent in OA"},
+    )
+    assert result.status_code == 200 and result.json()["status"] == "REJECTED"
+    assert client.get(f"/api/v1/campaigns/{second}/preview").json()[0]["eligible"]
+
+
+def test_label_index_sync_and_stage_patch_preserves_notes(client):
+    person, customer = create_customer(client)
+    assert (
+        client.put(
+            f"/api/v1/persons/{person}/labels", json={"labels": ["PriorityRetail"]}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get("/api/v1/search", params={"q": "PriorityRetail"}).json()[0][
+            "entity_id"
+        ]
+        == person
+    )
+    opp = client.post(
+        f"/api/v1/customers/{customer}/opportunities",
+        json={
+            "title": "WiFi",
+            "notes": "Preserve these notes",
+            "expected_revenue": 123,
+        },
+    ).json()["id"]
+    assert (
+        client.patch(
+            f"/api/v1/opportunities/{opp}", json={"stage": "QUOTED"}
+        ).status_code
+        == 200
+    )
+    with SessionLocal() as db:
+        assert db.get(OpportunityDB, opp).notes == "Preserve these notes"

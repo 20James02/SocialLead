@@ -383,7 +383,18 @@ def list_blacklist(db: Session = DbSession):
 
 @router.post("/blacklist", status_code=201)
 def create_blacklist(req: BlacklistInput, db: Session = DbSession):
-    value = req.value.strip().lower()
+    value = (
+        req.value.strip()
+        if req.entity_type == BlacklistEntityType.REGEX
+        else req.value.strip().lower()
+    )
+    if req.entity_type == BlacklistEntityType.REGEX:
+        import regex
+
+        try:
+            regex.compile(value)
+        except regex.error:
+            raise HTTPException(422, "Invalid content regex")
     if req.entity_type == BlacklistEntityType.PHONE:
         value = PhoneNormalizer.normalize_single(value)
     if not value:

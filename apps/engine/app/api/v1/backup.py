@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 import sqlite3
 from pathlib import Path
 from app.core.config import settings
-from app.infrastructure.database.session import engine, Base, init_db, SessionLocal
+from app.infrastructure.database.session import (
+    engine,
+    Base,
+    init_db,
+    SessionLocal,
+    recover_interrupted_operations,
+)
 from app.infrastructure.database.models import ScanJobDB
 from app.infrastructure.fts.fts_manager import FTSManager
 from app.api.deps import SessionAuth
@@ -80,6 +86,7 @@ def restore_backup(req: RestoreInput):
                 src.backup(dst)
         init_db()
         FTSManager.install_sync()
+        recover_interrupted_operations()
     except Exception:
         # Restore the safety snapshot if migration/index setup fails.
         engine.dispose()

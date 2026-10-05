@@ -1,33 +1,13 @@
-# Ubuntu / Linux Build & Release Guide — ScanSocial
+# Ubuntu packages
 
-## Prerequisites
-- Ubuntu 22.04 LTS / 24.04 LTS
-- Node.js 18+ & npm 9+
-- Python 3.12+
-- System packages:
-  ```bash
-  sudo apt update
-  sudo apt install -y build-essential libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
-  ```
-- Rust 1.75+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+The CI target is Ubuntu 22.04 x64. Install Python >= 3.12, Node >= 22.12, Rust stable and system libraries: libwebkit2gtk-4.1-dev, build-essential, libssl-dev, libayatana-appindicator3-dev, librsvg2-dev, patchelf and libsecret-1-dev.
 
-## Build Instructions
-1. **Compile Backend Sidecar:**
-   ```bash
-   cd apps/engine
-   pip install -r requirements.txt pyinstaller
-   pyinstaller --clean --noconfirm --onedir --name scansocial-engine app/main.py
-   mkdir -p ../desktop/src-tauri/bin
-   cp -r dist/scansocial-engine ../desktop/src-tauri/bin/scansocial-engine-x86_64-unknown-linux-gnu
-   ```
+```bash
+python -m pip install -r apps/engine/requirements.txt pyinstaller
+npm ci --prefix apps/desktop
+python scripts/build-sidecar.py
+python scripts/smoke-sidecar.py
+npm run tauri build --prefix apps/desktop
+```
 
-2. **Package Desktop Shell via Tauri:**
-   ```bash
-   cd ../desktop
-   npm install
-   npm run tauri build
-   ```
-
-3. **Output Artifacts:**
-   - Debian Package: `apps/desktop/src-tauri/target/release/bundle/deb/*.deb`
-   - Linux AppImage: `apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage`
+DEB and AppImage output lives under apps/desktop/src-tauri/target/release/bundle/. Download scansocial-Linux from Desktop Packages Actions artifacts. A working Secret Service session is required for keyring storage; environment tokens can be used if unavailable. Clean-machine installation remains a manual acceptance check.

@@ -91,7 +91,11 @@ class LocalOllamaProvider(AIProvider):
                     },
                 )
                 response.raise_for_status()
-                result = response.json().get("response", "").strip()
+                payload = response.json()
+                candidate = (
+                    payload.get("response") if isinstance(payload, dict) else None
+                )
+                result = candidate.strip() if isinstance(candidate, str) else ""
                 if result:
                     return result[:4000]
         except (httpx.HTTPError, ValueError):
