@@ -56,7 +56,6 @@ apps/desktop/dist-ssr/
 
 # Tauri & Rust
 apps/desktop/src-tauri/target/
-Cargo.lock
 
 # Environment & Sensitive Credentials
 .env
@@ -96,3 +95,4 @@ playwright-report/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/icons/android/
 apps/desktop/src-tauri/icons/ios/
+artifacts/

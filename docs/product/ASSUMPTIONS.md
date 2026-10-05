@@ -1,23 +1,9 @@
-# Engineering & Product Assumptions — ScanSocial
+# Implementation choices
 
-As specified in Rule LXXIX, any unprescribed implementation details are resolved with the simplest, most maintainable, cross-platform, testable, and modular approach, documented below:
-
-1. **Storage Engine Choice:**
-   - SQLite with WAL (Write-Ahead Logging) mode and memory-mapped I/O is selected for the local desktop engine.
-   - Schema and queries use SQLAlchemy 2.0 ORM and Core patterns to ensure frictionless migration to PostgreSQL for team/server editions in V2.
-
-2. **Loopback Port Negotiation:**
-   - The Python sidecar defaults to port `8765` but supports dynamic port negotiation via the `--port` flag if the default port is occupied.
-   - The session token (`X-App-Session-Token`) is generated via `secrets.token_urlsafe(32)` by the desktop shell and passed securely to the backend process upon launch.
-
-3. **Retention Defaults:**
-   - Unprocessed raw scan posts expire after **24 hours** by default (configurable to 3 days, 7 days, or never).
-   - Any post that is marked as Saved, associated with a Person, or converted to a Customer is marked with `is_raw = False` and is permanently protected from automated retention cleanup.
-
-4. **Vietnamese Phone Canonical Representation:**
-   - All Vietnamese mobile phone numbers are normalized to the standard international E.164 format: `+84[3|5|7|8|9]xxxxxxxx`.
-   - Domestic prefixes `03x`, `05x`, `07x`, `08x`, `09x` and plain country prefixes `84x` are mapped deterministically.
-   - Invalid numbers (e.g. fewer than 10 digits or illegal telco network prefixes) are rejected from automatic phone entity creation.
-
-5. **AI Provider Fallback:**
-   - If no cloud API key is provided and local Ollama is not detected, the system smoothly falls back to a deterministic rule-based Heuristic NLP engine. This guarantees that scoring, intent classification, and need extraction function with 100% reliability offline without crashing.
+- Single-user local SQLite with WAL and SQLAlchemy is the supported runtime. A team/server edition is not implemented.
+- Tauri selects a free loopback port and generates 32 random bytes for each session token, passed through the child environment. Developer mode uses scripts/dev.py.
+- Raw unprotected posts expire after the configured retention period, default 24 hours. Saved or CRM-linked posts are retained.
+- Vietnamese mobile phones normalize to E.164 and retain provenance. Extracted numbers begin unverified; extraction is not evidence of ownership.
+- Offline heuristics provide scoring and need extraction. Optional Ollama drafts fall back if unavailable; quality and accuracy require evaluation against business data.
+- Provider access uses official permitted APIs. Facebook Page feeds are not general social search. Personal Zalo sending is manual. OA sends require review and eligibility.
+- The current core delivery includes desktop CRM, JSON discovery, official adapters, consent, care, backups and installers. Real account entitlement, signing and clean-machine acceptance are external requirements documented in IMPLEMENTATION_STATUS.

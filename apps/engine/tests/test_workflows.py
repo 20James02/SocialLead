@@ -621,3 +621,26 @@ def test_label_index_sync_and_stage_patch_preserves_notes(client):
     )
     with SessionLocal() as db:
         assert db.get(OpportunityDB, opp).notes == "Preserve these notes"
+
+
+def test_restore_reconciles_interrupted_scan_snapshot(client):
+    from app.infrastructure.database.models import ScanJobDB
+
+    job_id = import_source(client)["id"]
+    with SessionLocal() as db:
+        db.get(ScanJobDB, job_id).status = "RUNNING"
+        db.commit()
+    snapshot = client.post("/api/v1/backup/create").json()["backup"]["filename"]
+    with SessionLocal() as db:
+        db.get(ScanJobDB, job_id).status = "COMPLETED"
+        db.commit()
+    response = client.post("/api/v1/backup/restore", json={"filename": snapshot})
+    assert response.status_code == 200, response.text
+    restored = client.get(f"/api/v1/scans/{job_id}").json()
+    assert restored["status"] == "FAILED"
+    assert "restored" in restored["error_message"]
+    # A stale RUNNING snapshot must not permanently prevent a second restore.
+    assert (
+        client.post("/api/v1/backup/restore", json={"filename": snapshot}).status_code
+        == 200
+    )
