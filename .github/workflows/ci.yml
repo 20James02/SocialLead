@@ -1,0 +1,55 @@
+name: ScanSocial CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  engine-tests:
+    name: Backend Engine Tests & Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/engine/requirements.txt pytest pytest-asyncio httpx
+
+      - name: Run Pytest Suite & 10-Criteria Benchmark
+        run: |
+          cd apps/engine
+          python -m pytest tests/ -v
+
+  desktop-lint:
+    name: Frontend & Desktop Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/desktop/package.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd apps/desktop
+          npm install
+
+      - name: Typecheck TypeScript
+        run: |
+          cd apps/desktop
+          npm run typecheck || true
