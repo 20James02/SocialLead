@@ -6,17 +6,19 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from app.core.config import settings
 
+
 class BackupManager:
     """
     Manages local database backups using SQLite Online Backup API.
     Guarantees consistent, non-locking snapshots without corrupting active WAL transactions.
     """
+
     BACKUP_DIR = settings.DATA_DIR / "backups"
 
     @classmethod
     def create_backup(cls) -> Dict[str, Any]:
         cls.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         backup_filename = f"scansocial_backup_{timestamp}.bak"
         backup_path = cls.BACKUP_DIR / backup_filename
 
@@ -39,7 +41,7 @@ class BackupManager:
             "filepath": str(backup_path),
             "size_bytes": file_size,
             "sha256": checksum,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
     @classmethod
@@ -47,7 +49,9 @@ class BackupManager:
         if not backup_path.exists():
             return False
         try:
-            conn = sqlite3.connect(str(backup_path))
+            conn = sqlite3.connect(
+                f"{backup_path.resolve().as_uri()}?mode=ro", uri=True
+            )
             cursor = conn.cursor()
             cursor.execute("PRAGMA integrity_check;")
             res = cursor.fetchone()
@@ -55,5 +59,6 @@ class BackupManager:
             return res and res[0] == "ok"
         except Exception:
             return False
+
 
 backup_manager = BackupManager()

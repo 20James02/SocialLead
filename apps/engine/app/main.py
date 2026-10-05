@@ -1,5 +1,9 @@
 import argparse
 import asyncio
+import hmac
+import logging
+import re
+from datetime import datetime, timezone
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, status
@@ -18,28 +22,91 @@ from app.api.v1.customers import router as customers_router
 from app.api.v1.care import router as care_router
 from app.api.v1.search import router as search_router
 from app.api.v1.backup import router as backup_router
+from app.api.v1.workspace import router as workspace_router
+from app.api.v1.integrations import router as integrations_router
+from app.api.v1.campaigns import router as campaigns_router
+from app.api.v1.scans import workers
+from app.infrastructure.database.session import SessionLocal
+from app.infrastructure.database.models import ScanJobDB, CareTaskDB
+from app.modules.scanner.retention import retention_cleaner
+from app.core.runtime import operation_lock
+
+
+async def maintenance():
+    reminded = set()
+    while True:
+        async with operation_lock:
+            await maintain_once(reminded)
+        await asyncio.sleep(60)
+
+
+async def maintain_once(reminded):
+    with SessionLocal() as db:
+        if settings.RAW_SCAN_RETENTION_HOURS > 0:
+            retention_cleaner.cleanup_expired_raw_scans(
+                db, settings.RAW_SCAN_RETENTION_HOURS
+            )
+        due = (
+            db.query(CareTaskDB)
+            .filter(
+                CareTaskDB.status == "PENDING",
+                CareTaskDB.deleted_at.is_(None),
+                CareTaskDB.scheduled_at <= datetime.now(timezone.utc),
+            )
+            .all()
+        )
+        for task in due:
+            if task.id not in reminded:
+                await event_bus.publish(
+                    "CARE_TASK_DUE", "care", {"task_id": task.id, "title": task.title}
+                )
+                reminded.add(task.id)
+        reminded.intersection_update(t.id for t in due)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize tables and FTS5 index
     init_db()
-    FTSManager.init_fts_table()
+    FTSManager.install_sync()
+    with SessionLocal() as db:
+        db.query(ScanJobDB).filter(ScanJobDB.status.in_(["RUNNING", "PAUSED"])).update(
+            {
+                "status": "FAILED",
+                "error_message": "Engine restarted before scan completed",
+                "finished_at": datetime.now(timezone.utc),
+            }
+        )
+        db.commit()
     print(f"[*] ScanSocial Engine started on {settings.HOST}:{settings.PORT}")
-    print(f"[*] Session Auth Token: {settings.SESSION_TOKEN}")
-    yield
+    maintenance_task = asyncio.create_task(maintenance())
+    try:
+        yield
+    finally:
+        tasks = [maintenance_task, *workers.values()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        workers.clear()
     print("[*] ScanSocial Engine shutting down gracefully")
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    lifespan=lifespan
-)
+
+app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def serialize_database_requests(request, call_next):
+    if request.url.path.startswith("/api/v1"):
+        async with operation_lock:
+            return await call_next(request)
+    return await call_next(request)
+
 
 # CORS configuration for local Tauri frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -53,9 +120,13 @@ app.include_router(customers_router, prefix=api_v1_prefix)
 app.include_router(care_router, prefix=api_v1_prefix)
 app.include_router(search_router, prefix=api_v1_prefix)
 app.include_router(backup_router, prefix=api_v1_prefix)
+app.include_router(workspace_router, prefix=api_v1_prefix)
+app.include_router(integrations_router, prefix=api_v1_prefix)
+app.include_router(campaigns_router, prefix=api_v1_prefix)
 
 # Active WebSocket clients
 connected_clients: list[WebSocket] = []
+
 
 async def on_bus_event(event: EventEnvelope):
     """Broadcasts all application events to connected WebSocket desktop UI clients."""
@@ -69,12 +140,14 @@ async def on_bus_event(event: EventEnvelope):
             if ws in connected_clients:
                 connected_clients.remove(ws)
 
+
 # Subscribe to all internal events
 event_bus.subscribe("*", on_bus_event)
 
+
 @app.websocket("/ws/live")
 async def websocket_live_endpoint(websocket: WebSocket, token: str = Query(...)):
-    if token != settings.SESSION_TOKEN:
+    if not hmac.compare_digest(token.encode(), settings.SESSION_TOKEN.encode()):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -88,19 +161,29 @@ async def websocket_live_endpoint(websocket: WebSocket, token: str = Query(...))
         if websocket in connected_clients:
             connected_clients.remove(websocket)
 
+
 @app.get("/health")
 def health_check():
+    with SessionLocal() as db:
+        from sqlalchemy import text
+
+        db.execute(text("SELECT 1"))
     return {
         "status": "HEALTHY",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "database": "CONNECTED"
+        "database": "CONNECTED",
     }
 
-if __name__ == "__main__":
+
+def run():
     parser = argparse.ArgumentParser(description="ScanSocial Local Backend Engine")
-    parser.add_argument("--port", type=int, default=settings.PORT, help="Port to bind (127.0.0.1)")
-    parser.add_argument("--session-token", type=str, default=None, help="Ephemeral session secret token")
+    parser.add_argument(
+        "--port", type=int, default=settings.PORT, help="Port to bind (127.0.0.1)"
+    )
+    parser.add_argument(
+        "--session-token", type=str, default=None, help="Ephemeral session secret token"
+    )
     args = parser.parse_args()
 
     if args.port:
@@ -108,4 +191,28 @@ if __name__ == "__main__":
     if args.session_token:
         settings.SESSION_TOKEN = args.session_token
 
-    uvicorn.run(app, host=settings.HOST, port=settings.PORT, log_level="info")
+    config = uvicorn.Config(
+        app, host=settings.HOST, port=settings.PORT, log_level="info"
+    )
+
+    class RedactSessionToken(logging.Filter):
+        def filter(self, record):
+            def redact(value):
+                return (
+                    re.sub(r"(token=)[^\s\"\]]+", r"\1[REDACTED]", value)
+                    if isinstance(value, str)
+                    else value
+                )
+
+            record.msg = redact(record.msg)
+            if isinstance(record.args, tuple):
+                record.args = tuple(redact(arg) for arg in record.args)
+            return True
+
+    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(logger_name).addFilter(RedactSessionToken())
+    uvicorn.Server(config).run()
+
+
+if __name__ == "__main__":
+    run()

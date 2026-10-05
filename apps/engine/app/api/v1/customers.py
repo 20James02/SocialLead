@@ -6,10 +6,17 @@ from pydantic import BaseModel
 
 from app.api.deps import DbSession, SessionAuth
 from app.infrastructure.database.models import (
-    CustomerDB, CustomerNeedProfileDB, OpportunityDB, TimelineEventDB, NoteDB
+    CustomerDB,
+    CustomerNeedProfileDB,
+    OpportunityDB,
+    TimelineEventDB,
+    NoteDB,
 )
 
-router = APIRouter(prefix="/customers", tags=["Customers 360"], dependencies=[SessionAuth])
+router = APIRouter(
+    prefix="/customers", tags=["Customers 360"], dependencies=[SessionAuth]
+)
+
 
 class OpportunityItem(BaseModel):
     id: str
@@ -18,12 +25,14 @@ class OpportunityItem(BaseModel):
     expected_revenue: float
     created_at: datetime
 
+
 class TimelineItem(BaseModel):
     id: str
     event_type: str
     title: str
     metadata_json: Optional[str]
     created_at: datetime
+
 
 class Customer360Response(BaseModel):
     id: str
@@ -41,9 +50,14 @@ class Customer360Response(BaseModel):
     opportunities: List[OpportunityItem]
     timeline: List[TimelineItem]
 
+
 @router.get("/{customer_id}", response_model=Customer360Response)
 def get_customer_360(customer_id: str, db: Session = DbSession):
-    cust = db.query(CustomerDB).filter(CustomerDB.id == customer_id).first()
+    cust = (
+        db.query(CustomerDB)
+        .filter(CustomerDB.id == customer_id, CustomerDB.deleted_at.is_(None))
+        .first()
+    )
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found")
 
@@ -54,7 +68,7 @@ def get_customer_360(customer_id: str, db: Session = DbSession):
             title=o.title,
             stage=o.stage,
             expected_revenue=float(o.expected_revenue or 0.0),
-            created_at=o.created_at
+            created_at=o.created_at,
         )
         for o in cust.opportunities
     ]
@@ -65,7 +79,7 @@ def get_customer_360(customer_id: str, db: Session = DbSession):
             event_type=t.event_type,
             title=t.title,
             metadata_json=t.metadata_json,
-            created_at=t.created_at
+            created_at=t.created_at,
         )
         for t in cust.person.timeline_events
     ]
@@ -84,5 +98,5 @@ def get_customer_360(customer_id: str, db: Session = DbSession):
         province=need.province if need else None,
         urgency=need.urgency if need else None,
         opportunities=opps,
-        timeline=events
+        timeline=events,
     )

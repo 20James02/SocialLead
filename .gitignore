@@ -84,3 +84,15 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Local runtime, packaging and browser test artifacts
+data/
+*.log
+*.spec
+apps/desktop/src-tauri/bin/*
+!apps/desktop/src-tauri/bin/.gitkeep
+test-results/
+playwright-report/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/

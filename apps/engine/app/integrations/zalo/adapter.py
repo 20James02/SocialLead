@@ -1,32 +1,44 @@
-import asyncio
-from typing import List, Dict, Any, Optional
+import httpx
 from app.integrations.base import MessagingAdapter
+from app.infrastructure.security.vault import vault
+from app.integrations.official import IntegrationUnavailable
+
 
 class ZaloPersonalAssistAdapter(MessagingAdapter):
-    """
-    Assisted 1:1 Sales Support.
-    Provides context synchronization and message draft suggestions for manual salesperson review.
-    Does NOT execute automated bulk spam.
-    """
     async def send_message(self, conversation_id: str, content: str) -> bool:
-        # In desktop context, prepares manual intent or bridges to desktop client
-        await asyncio.sleep(0.01)
-        return True
+        raise IntegrationUnavailable(
+            "Personal Zalo messages require manual sending; use the draft assistant"
+        )
 
-    async def sync_recent_conversations(self) -> List[Dict[str, Any]]:
-        return []
+    async def sync_recent_conversations(self):
+        raise IntegrationUnavailable("Use manual conversation import for personal Zalo")
+
 
 class ZaloOAAdapter(MessagingAdapter):
-    """
-    Official Account Integration.
-    Executes compliant customer care messages via official Zalo OA APIs.
-    """
     async def send_message(self, conversation_id: str, content: str) -> bool:
-        await asyncio.sleep(0.01)
-        return True
+        token = vault.get_secret("zalo_access_token")
+        if not token:
+            raise IntegrationUnavailable("Zalo OA access token is not configured")
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                "https://openapi.zalo.me/v3.0/oa/message/cs",
+                headers={"access_token": token},
+                json={
+                    "recipient": {"user_id": conversation_id},
+                    "message": {"text": content},
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            return body.get("error") == 0 and bool(
+                body.get("data", {}).get("message_id")
+            )
 
-    async def sync_recent_conversations(self) -> List[Dict[str, Any]]:
-        return []
+    async def sync_recent_conversations(self):
+        raise IntegrationUnavailable(
+            "Automatic conversation sync is not configured; log authorized messages locally"
+        )
+
 
 zalo_personal = ZaloPersonalAssistAdapter()
 zalo_oa = ZaloOAAdapter()

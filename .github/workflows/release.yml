@@ -1,4 +1,6 @@
 name: ScanSocial Release
+permissions:
+  contents: write
 
 on:
   push:
@@ -31,7 +33,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -51,7 +53,7 @@ jobs:
       - name: Build Desktop Application (Tauri)
         run: |
           cd apps/desktop
-          npm install
+          npm ci
           npm run tauri build
 
       - name: Upload Release Artifacts

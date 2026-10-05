@@ -12,23 +12,52 @@ from app.domain.models import PhoneProvenance
 # Itelecom: 087
 # Wintel: 055
 VN_MOBILE_PREFIXES = {
-    "86", "96", "97", "98", "32", "33", "34", "35", "36", "37", "38", "39",
-    "89", "90", "93", "70", "79", "77", "76", "78",
-    "88", "91", "94", "83", "84", "85", "81", "82",
-    "92", "56", "58",
-    "99", "59",
-    "87", "55"
+    "86",
+    "96",
+    "97",
+    "98",
+    "32",
+    "33",
+    "34",
+    "35",
+    "36",
+    "37",
+    "38",
+    "39",
+    "89",
+    "90",
+    "93",
+    "70",
+    "79",
+    "77",
+    "76",
+    "78",
+    "88",
+    "91",
+    "94",
+    "83",
+    "84",
+    "85",
+    "81",
+    "82",
+    "92",
+    "56",
+    "58",
+    "99",
+    "59",
+    "87",
+    "55",
 }
+
 
 class PhoneNormalizer:
     """
     Production-grade Vietnamese Phone Extractor, Normalizer & Provenance Tracker.
     Converts 09x, 03x, 07x, 08x, 05x, 84x, +84x into canonical E.164 (+84xxxxxxxxx).
     """
+
     # Regex to find candidate phone patterns in raw text (handling dots, spaces, dashes)
-    PHONE_REGEX = re.compile(
-        r'(?:\+?84|0)(?:[\s.-]*\d){9}\b'
-    )
+    PHONE_REGEX = re.compile(r"(?<![\d+])(?:\+?84|0)(?:[\s.()\-]*\d){9}(?!\d)")
 
     @classmethod
     def normalize_single(cls, raw: str) -> Optional[str]:
@@ -38,28 +67,28 @@ class PhoneNormalizer:
         """
         if not raw:
             return None
-        
+
         # Strip all delimiters (spaces, dots, dashes, parentheses)
-        digits = re.sub(r'[\s.\-()]+', '', raw.strip())
-        
+        digits = re.sub(r"[\s.\-()]+", "", raw.strip())
+
         # Handle +84 prefix
-        if digits.startswith('+84'):
+        if digits.startswith("+84"):
             core = digits[3:]
-        elif digits.startswith('84'):
+        elif digits.startswith("84"):
             core = digits[2:]
-        elif digits.startswith('0'):
+        elif digits.startswith("0"):
             core = digits[1:]
         else:
             return None
-        
+
         # Must be exactly 9 digits after country code / leading zero
         if len(core) != 9 or not core.isdigit():
             return None
-        
+
         prefix = core[:2]
         if prefix not in VN_MOBILE_PREFIXES:
             return None
-        
+
         return f"+84{core}"
 
     @classmethod
@@ -68,7 +97,7 @@ class PhoneNormalizer:
         text: str,
         source_type: str = "SOCIAL_POST",
         source_url: Optional[str] = None,
-        captured_at: Optional[datetime] = None
+        captured_at: Optional[datetime] = None,
     ) -> List[PhoneProvenance]:
         """
         Finds all valid Vietnamese phone numbers in unstructured text and wraps them
@@ -76,7 +105,7 @@ class PhoneNormalizer:
         """
         if not text:
             return []
-        
+
         captured_time = captured_at or datetime.now(timezone.utc)
         matches = cls.PHONE_REGEX.findall(text)
         results: List[PhoneProvenance] = []
@@ -93,7 +122,7 @@ class PhoneNormalizer:
                         source_type=source_type,
                         source_url=source_url,
                         captured_at=captured_time,
-                        is_verified=False
+                        is_verified=False,
                     )
                 )
         return results

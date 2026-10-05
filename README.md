@@ -1,133 +1,97 @@
-# ScanSocial — Local-First Social Lead Intelligence & Customer 360 CRM
+# ScanSocial
 
-[![CI/CD Status](https://github.com/20James02/SocialLead/actions/workflows/ci.yml/badge.svg)](https://github.com/20James02/SocialLead/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tauri 2](https://img.shields.io/badge/desktop-Tauri%202-orange.svg)](https://tauri.app/)
-[![React 18](https://img.shields.io/badge/frontend-React%2018%20%2B%20TS-cyan.svg)](https://react.dev/)
-[![SQLite WAL + FTS5](https://img.shields.io/badge/storage-SQLite%20WAL%20%2B%20FTS5-green.svg)](https://sqlite.org/)
+Ứng dụng CRM local-first bằng React + Tauri 2 và FastAPI/SQLite, dành cho quản lý lead từ Facebook, Threads và chăm sóc khách hàng qua Zalo.
 
-**ScanSocial** is a production-grade, local-first desktop application designed for Vietnam and global social-lead workflows. It fuses:
-1. **Social Lead Intelligence:** Low-footprint discovery sensor for Facebook & Threads.
-2. **Customer 360 CRM:** Unified `PERSON` entity identity resolution, Vietnamese phone normalization, and full activity timeline.
-3. **Multi-mode Blacklist & Spam Shield:** Eliminating sellers, spammers, and competitor noise at Level 0.
-4. **Zalo Customer Care Assisted Hub:** Context-aware 1:1 sales assistant + compliant Zalo OA campaign automation.
+## Chức năng đã triển khai
 
----
+- Giao diện tiếng Việt: tổng quan, khám phá lead, khách hàng 360, cơ hội bán hàng, lịch chăm sóc, trợ lý Zalo, chăm sóc OA, blacklist và sao lưu.
+- Nhập bài viết/bình luận JSON; lọc tuổi bài, chống trùng qua nhiều lần nhập, blacklist cứng/mềm, chấm điểm có giải thích, trích xuất SĐT với nguồn dữ liệu.
+- Tạo liên hệ thủ công hoặc từ bài/bình luận; chuyển thành khách hàng, nhu cầu, cơ hội, ghi chú, nhãn, dòng thời gian và hợp nhất hồ sơ.
+- Lịch chăm sóc, cảnh báo đến hạn và đề xuất follow-up sau báo giá 48 giờ.
+- Tìm kiếm FTS5 tự đồng bộ bài viết, hồ sơ, SĐT, URL, ghi chú và nhãn.
+- Sao lưu SQLite online, khôi phục có bản sao an toàn trước khi ghi, xuất CSV.
+- Zalo cá nhân: liên kết hội thoại, ghi nhận tin nhắn, soạn nháp và sao chép để gửi thủ công.
+- Zalo OA: đợt chăm sóc có bản xem trước, consent, hạn mức, giờ yên lặng Việt Nam và duyệt từng tin. Không giả báo gửi thành công.
+- Desktop tự khởi động/dừng engine sidecar, token ngẫu nhiên mỗi phiên, dữ liệu lưu tại thư mục ứng dụng của người dùng.
 
-## Key Highlights
+## Chạy phát triển
 
-- **Local-First Architecture:** All customer profiles, social posts, timeline events, and notes are stored locally in SQLite (WAL Mode + FTS5 full-text search). Runs 100% offline for CRM operations.
-- **Privacy & Safety by Design:** No fingerprint spoofing, no anti-abuse bypass, no hidden phone speculation. Strict provenance is recorded for every data point.
-- **One Codebase — Multi-OS:** Built with Tauri 2 (Rust) + React TypeScript frontend + Python 3.12+ FastAPI local sidecar. Cross-compiles to Windows (`.msi`, `.exe`) and Ubuntu (`.deb`, `AppImage`).
-- **Discovery Sensor Hierarchy:**
-  - **L0:** Lightweight metadata snippet filtering & deduplication.
-  - **L1:** Full content, intent classification, Vietnamese phone extraction & multi-dimensional scoring.
-  - **L2:** Deep comment synchronisation & secondary lead promotion.
-- **Explainable Multi-Score Engine:** Intent Score, Urgency Score, Opportunity Score, Spam Score, Contact Quality Score, and Overall Lead Score with transparent breakdown.
-- **Loopback API Security:** Bound exclusively to `127.0.0.1` protected by a cryptographically random session token (`X-App-Session-Token`). Secrets are stored via OS Keyring (Windows Credential Manager / Linux Secret Service).
+Yêu cầu Python >= 3.12 và Node >= 22.12.
 
----
-
-## Repository Structure
-
-```text
-ScanSocial/
-├── apps/
-│   ├── desktop/                           # Tauri 2 + React 18 + TS + Tailwind UI
-│   │   ├── src/                           # UI Components, Stores, Services
-│   │   ├── src-tauri/                     # Rust desktop shell & sidecar supervisor
-│   │   └── package.json
-│   └── engine/                            # Python 3.12+ FastAPI backend sidecar
-│       ├── app/
-│       │   ├── api/                       # REST endpoints & WebSocket server
-│       │   ├── core/                      # Config, security, event bus, logging
-│       │   ├── domain/                    # Pure domain models & value objects
-│       │   ├── infrastructure/            # SQLite WAL, FTS5, OS Keyring
-│       │   ├── integrations/              # Facebook, Threads, Zalo Adapters
-│       │   └── modules/                   # Scoring, Identity, Scanner, CRM, Care, AI
-│       ├── tests/                         # Pytest suite & 10-Criteria Benchmark
-│       └── pyproject.toml
-├── docs/                                  # Complete Technical Specifications
-│   ├── product/                           # PRD & Assumptions
-│   ├── architecture/                      # System diagrams & modules
-│   ├── database/                          # ERD & SQL schemas
-│   ├── api/                               # REST & WebSocket contracts
-│   ├── security/                          # Security model & secrets
-│   └── release/                           # Windows & Ubuntu build guides
-├── scripts/                               # Dev & build automation scripts
-├── .github/workflows/                     # GitHub Actions CI & Release
-└── README.md
+```bash
+python -m pip install -r apps/engine/requirements.txt
+npm ci --prefix apps/desktop
+python scripts/dev.py
 ```
 
----
+Trong terminal khác:
 
-## Getting Started
+```bash
+cd apps/desktop
+npm run dev
+```
 
-### Prerequisites
+Mở `http://127.0.0.1:5173`, dùng địa chỉ engine và token được script phát triển in ra. CRM mặc định của script này nằm tại `data/`, bị loại khỏi Git. Engine production không in token ra log.
 
-- **Python 3.12+** (Python 3.12, 3.13, 3.14 supported)
-- **Node.js 18+** & **npm 9+**
-- *(Optional for Desktop compilation)*: **Rust 1.75+** & Cargo
+## Kiểm chứng
 
-### Quick Local Dev Setup
+```bash
+python -m pytest apps/engine/tests -q
+cd apps/desktop
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/20James02/SocialLead.git
-   cd SocialLead
-   ```
+Test backend và trình duyệt dùng dữ liệu tạm độc lập, không sửa CRM thật. CI không bỏ qua lỗi typecheck. Test benchmark chỉ kiểm tra thuật toán; không đại diện cho chứng nhận chất lượng production hay quyền sử dụng API.
 
-2. **Set up the Engine (Backend Sidecar):**
-   ```bash
-   cd apps/engine
-   pip install -r requirements.txt
-   # Run tests and verify the 10-criteria benchmark
-   python -m pytest tests/ -v
-   ```
+## Nhập dữ liệu
 
-3. **Start Engine Service:**
-   ```bash
-   python -m app.main --port 8765 --session-token dev-secret-token-12345
-   ```
+Chọn **Khám phá lead → Nhập JSON**. Có thể bấm **Điền ví dụ** để xem định dạng; dữ liệu ví dụ chỉ được ghi khi bạn bấm nhập. Định dạng:
 
-4. **Launch Frontend (Web or Tauri):**
-   ```bash
-   cd ../desktop
-   npm install
-   npm run dev
-   ```
+```json
+{
+  "platform": "FACEBOOK",
+  "max_age_hours": 168,
+  "posts": [{
+    "platform": "FACEBOOK",
+    "external_id": "your-post-id",
+    "url": "https://www.facebook.com/posts/your-post-id",
+    "author_name": "Tên liên hệ",
+    "author_id": "optional-author-id",
+    "content": "Nội dung bạn có quyền sử dụng",
+    "posted_at": "2026-10-05T08:00:00+07:00",
+    "comments": []
+  }]
+}
+```
 
----
+SĐT trích xuất chưa được xác minh chủ sở hữu; trùng tên hoặc SĐT chưa xác minh không đủ điều kiện tự hợp nhất. Bài đã lưu hoặc liên kết CRM được bảo vệ khỏi retention.
 
-## Automated 10-Criteria Benchmark Score
+## Kết nối thật và giới hạn
 
-The codebase includes an automated quality & domain logic scorer (`apps/engine/tests/test_benchmark_score.py`):
+- **Facebook:** chỉ đọc Page feed được cấp quyền. Cấu hình `SCANSOCIAL_FACEBOOK_PAGE_IDS='["PAGE_ID"]'` và token Page trong Cài đặt hoặc `SCANSOCIAL_FACEBOOK_ACCESS_TOKEN`. Không cung cấp tìm kiếm tùy ý toàn Facebook/Groups.
+- **Threads:** official keyword search; cần token và quyền API phù hợp. Đặt token trong Cài đặt hoặc `SCANSOCIAL_THREADS_ACCESS_TOKEN`.
+- **Zalo OA:** cần token chính thức `SCANSOCIAL_ZALO_ACCESS_TOKEN`, UID OA đúng, sự đồng ý và tương tác gần đây. Chăm sóc sử dụng tin tư vấn; không phải công cụ phát quảng cáo hàng loạt.
+- **Zalo cá nhân:** thao tác gửi và nhập lịch sử là thủ công. Không truy cập tự động tài khoản cá nhân.
+- **AI:** chấm điểm/nhu cầu dùng heuristic offline. `SCANSOCIAL_DEFAULT_AI_PROVIDER=ollama` bật soạn phản hồi qua Ollama local, có fallback khi dịch vụ không sẵn sàng.
+- Quyền/token và gửi thật trên các nền tảng phải được kiểm chứng với tài khoản được cấp quyền; test dự án không gửi tin cho khách thật.
 
-| # | Evaluation Criterion | Target Score | Verified Status |
-|---|----------------------|:------------:|:---------------:|
-| 1 | **Deduplication & Canonical Hashing** | 10 / 10 | PASS |
-| 2 | **Vietnamese Phone Normalization & Provenance** | 10 / 10 | PASS |
-| 3 | **Identity Resolution & Duplicate Person Detection** | 10 / 10 | PASS |
-| 4 | **Multi-mode Blacklist Engine (Hard & Soft)** | 10 / 10 | PASS |
-| 5 | **Multi-dimensional Lead Scoring & Explainability** | 10 / 10 | PASS |
-| 6 | **Need Profile & Next Best Action Extraction** | 10 / 10 | PASS |
-| 7 | **CRM Lifecycle & Retention Engine** | 10 / 10 | PASS |
-| 8 | **Care Calendar & Follow-up Rules** | 10 / 10 | PASS |
-| 9 | **Full-Text Search & Global Query (FTS5)** | 10 / 10 | PASS |
-| 10 | **Security, Privacy & Consent Governance** | 10 / 10 | PASS |
-| **Total** | **Comprehensive Benchmark** | **100 / 100** | **PERFECT (10/10)** |
+Secrets lưu trong OS keyring. Khi không có keyring, dùng biến môi trường; không tự lưu khóa mã hóa cạnh dữ liệu. Engine chỉ bind `127.0.0.1`, REST và WebSocket đều xác thực session token, CORS giới hạn origin local.
 
----
+## Desktop và bộ cài
 
-## Packaging & Releases
+Cần Rust stable, WebView2 và MSVC Build Tools trên Windows; xem hướng dẫn Tauri chính thức: https://v2.tauri.app/start/prerequisites/.
 
-- **Windows:** Builds portable `.exe` and `.msi` installers using WiX toolset via `npm run tauri build`.
-- **Ubuntu/Linux:** Builds `.deb` and `.AppImage` packages.
-- See detailed instructions in `docs/release/WINDOWS.md` and `docs/release/UBUNTU.md`.
+```bash
+python -m pip install pyinstaller
+python scripts/build-sidecar.py
+cd apps/desktop
+npm run tauri dev
+# or
+npm run tauri build
+```
 
----
+Workflow **Desktop Packages** build Windows/Ubuntu và lưu bộ cài dưới Actions artifacts mỗi lần push. Workflow release chỉ chạy khi push tag `v*`. Xem `docs/release/` và `docs/testing/TEST_PLAN.md`.
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License.

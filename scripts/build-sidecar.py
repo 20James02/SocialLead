@@ -12,6 +12,7 @@ import subprocess
 import shutil
 from pathlib import Path
 
+
 def get_target_triple():
     arch = platform.machine().lower()
     if arch in ("amd64", "x86_64"):
@@ -30,6 +31,7 @@ def get_target_triple():
         return f"{target_arch}-apple-darwin"
     else:
         raise RuntimeError(f"Unsupported OS: {system}")
+
 
 def main():
     repo_root = Path(__file__).resolve().parent.parent
@@ -55,7 +57,21 @@ def main():
         "--onefile",
         "--name",
         f"scansocial-engine-{triple}",
-        str(engine_dir / "app" / "main.py"),
+        "--paths",
+        str(engine_dir),
+        "--collect-submodules",
+        "app",
+        "--collect-submodules",
+        "uvicorn",
+        "--collect-submodules",
+        "sqlalchemy.dialects.sqlite",
+        "--collect-submodules",
+        "keyring.backends",
+        "--hidden-import",
+        "win32ctypes.pywin32.win32cred"
+        if platform.system().lower() == "windows"
+        else "keyring.backends.SecretService",
+        str(engine_dir / "entrypoint.py"),
     ]
 
     subprocess.check_call(cmd, cwd=str(engine_dir))
@@ -67,6 +83,7 @@ def main():
     else:
         print(f"[-] Dist binary not found at {dist_binary}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

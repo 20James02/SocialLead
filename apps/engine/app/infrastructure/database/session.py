@@ -9,8 +9,9 @@ Base = declarative_base()
 engine = create_engine(
     settings.SQLALCHEMY_DATABASE_URI,
     connect_args={"check_same_thread": False},
-    echo=settings.DEBUG
+    echo=settings.DEBUG,
 )
+
 
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
@@ -21,7 +22,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor.execute("PRAGMA foreign_keys = ON")
         cursor.close()
 
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 def get_db():
     db = SessionLocal()
@@ -30,5 +33,11 @@ def get_db():
     finally:
         db.close()
 
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Additive migration for databases produced by the initial prototype.
+    with engine.begin() as conn:
+        columns = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(scan_jobs)")}
+        if "error_message" not in columns:
+            conn.exec_driver_sql("ALTER TABLE scan_jobs ADD COLUMN error_message TEXT")
